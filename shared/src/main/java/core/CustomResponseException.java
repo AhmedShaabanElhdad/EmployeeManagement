@@ -1,4 +1,4 @@
-package com.ahmed.employee_management_system.core;
+package core;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
