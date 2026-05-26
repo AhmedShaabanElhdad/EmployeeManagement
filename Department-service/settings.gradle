@@ -1,0 +1,3 @@
+rootProject.name = 'Department-service'
+include 'shared'
+project(':shared').projectDir = new File('../shared')
