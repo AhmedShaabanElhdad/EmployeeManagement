@@ -1,9 +1,10 @@
-package com.ahmed.employee_management_system.service;
+package com.example.departmentservice.service;
 
-import com.ahmed.employee_management_system.abstraction.DepartmentService;
-import com.ahmed.employee_management_system.core.CustomResponseException;
-import com.ahmed.employee_management_system.entity.Department;
-import com.ahmed.employee_management_system.repo.DepartmentRepo;
+import com.example.departmentservice.abstraction.DepartmentService;
+import com.example.departmentservice.dtos.CreateDepartmentRequest;
+import com.example.departmentservice.entity.Department;
+import com.example.departmentservice.repo.DepartmentRepo;
+import core.CustomResponseException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -49,10 +50,10 @@ public class DepartmentServiceImp implements DepartmentService {
     }
 
     @Override
-    public Department createDepartment(String name) {
+    public Department createDepartment(CreateDepartmentRequest request) {
         Department department = new Department();
         department.setId(UUID.randomUUID());
-        department.setName(name);
+        department.setName(request.name());
         return departmentRepo.save(department);
     }
 }

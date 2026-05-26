@@ -1,1 +1,9 @@
-rootProject.name = 'demo'
+rootProject.name = 'employee-management-system'
+
+include 'shared'
+include 'api-gateway'
+include 'Auth-service'
+include 'Eureka-server'
+include 'Employee-service'
+include 'Department-service'
+include 'Notification'

@@ -1,6 +1,8 @@
-package com.ahmed.employee_management_system.abstraction;
+package com.example.departmentservice.abstraction;
 
-import com.ahmed.employee_management_system.entity.Department;
+
+import com.example.departmentservice.dtos.CreateDepartmentRequest;
+import com.example.departmentservice.entity.Department;
 
 import java.util.List;
 import java.util.UUID;
@@ -14,5 +16,5 @@ public interface DepartmentService {
 
     void deleteDepartment(UUID id);
 
-    Department createDepartment(String name);
+    Department createDepartment(CreateDepartmentRequest request);
 }

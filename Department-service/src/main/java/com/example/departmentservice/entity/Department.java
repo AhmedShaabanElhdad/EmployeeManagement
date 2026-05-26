@@ -1,4 +1,4 @@
-package com.ahmed.employee_management_system.entity;
+package com.example.departmentservice.entity;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
