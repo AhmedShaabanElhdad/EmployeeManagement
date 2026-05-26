@@ -1,0 +1,132 @@
+version: '3.9'
+
+services:
+  # Infrastructure
+  postgres-auth:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: user
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+
+  postgres-employee:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: employees
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5433:5432"
+
+  postgres-department:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: department
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5434:5432"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: myuser
+      RABBITMQ_DEFAULT_PASS: secret
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  zipkin:
+    image: openzipkin/zipkin
+    ports:
+      - "9411:9411"
+
+  # Microservices
+  eureka-server:
+    build:
+      context: .
+      dockerfile: Eureka-server/Dockerfile
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: Auth-service/Dockerfile
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-auth:5432/user
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    depends_on:
+      postgres-auth:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+
+  employee-service:
+    build:
+      context: .
+      dockerfile: Employee-service/Dockerfile
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-employee:5432/employees
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      postgres-employee:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+
+  department-service:
+    build:
+      context: .
+      dockerfile: Department-service/Dockerfile
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-department:5432/department
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    depends_on:
+      postgres-department:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Notification/Dockerfile
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_RABBITMQ_HOST=rabbitmq
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_DATA_REDIS_HOST=redis
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      redis:
+        condition: service_started
