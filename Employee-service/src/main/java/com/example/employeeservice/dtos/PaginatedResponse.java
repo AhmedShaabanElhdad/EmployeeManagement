@@ -1,4 +1,4 @@
-package com.ahmed.employee_management_system.dtos;
+package com.example.employeeservice.dtos;
 
 import java.util.List;
 
