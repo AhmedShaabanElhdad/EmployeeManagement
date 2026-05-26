@@ -1,6 +1,6 @@
-package com.ahmed.employee_management_system.repo;
+package com.example.authservice.repo;
 
-import com.ahmed.employee_management_system.entity.UserAccount;
+import com.example.authservice.entity.UserAccount;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

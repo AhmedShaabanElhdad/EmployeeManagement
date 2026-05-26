@@ -1,0 +1,3 @@
+rootProject.name = 'Auth-service'
+include 'shared'
+project(':shared').projectDir = new File('../shared')
