@@ -4,11 +4,11 @@ import com.example.employeeservice.dtos.EmployeeCreatedEvent;
 import com.example.employeeservice.entity.Outbox;
 import com.example.employeeservice.message.publisher.EmployeeEventPublisher;
 import com.example.employeeservice.repo.OutboxRepo;
+import com.example.shared.events.EmployeeSagaEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,8 +24,9 @@ public class OutboxProcessor {
     private final OutboxRepo outboxRepo;
     private final EmployeeEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 5000) // Poll every 5 seconds
     @Transactional
     public void processOutboxEvents() {
         List<Outbox> unprocessedEvents = outboxRepo.findByProcessedFalse();
@@ -35,13 +36,16 @@ public class OutboxProcessor {
                 if ("EmployeeCreated".equals(event.getEventType())) {
                     EmployeeCreatedEvent payload = objectMapper.readValue(event.getPayload(), EmployeeCreatedEvent.class);
                     eventPublisher.publishEmployeeCreated(payload);
+                } else if ("EmployeeSagaStart".equals(event.getEventType())) {
+                    EmployeeSagaEvent sagaPayload = objectMapper.readValue(event.getPayload(), EmployeeSagaEvent.class);
+                    kafkaTemplate.send("employee-saga-topic", sagaPayload);
                 }
-
+                
                 event.setProcessed(true);
                 event.setProcessedAt(Instant.now());
                 outboxRepo.save(event);
-
-                log.info("Successfully processed outbox event: {}", event.getId());
+                
+                log.info("Successfully processed outbox event: {} of type {}", event.getId(), event.getEventType());
             } catch (Exception e) {
                 log.error("Failed to process outbox event: {}", event.getId(), e);
             }

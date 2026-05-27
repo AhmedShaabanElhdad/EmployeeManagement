@@ -8,6 +8,7 @@ import com.example.employeeservice.gateway.DepartmentGateway;
 import com.example.employeeservice.mapper.Mapper;
 import com.example.employeeservice.repo.EmployeeRepo;
 import com.example.employeeservice.repo.OutboxRepo;
+import com.example.shared.events.EmployeeSagaEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import core.CustomResponseException;
@@ -110,23 +111,45 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setHireAt(createEmployeeDTO.hireAt());
         employee.setPhoneNumber(createEmployeeDTO.phoneNumber());
         employee.setDepartmentId(response.data.id());
+        employee.setStatus(Employee.Status.PENDING); // Initialize as PENDING for Saga
 
         Employee savedEmployee = employeeRepo.save(employee);
 
-        // Transactional Outbox Pattern: Save event to Outbox table
-        EmployeeCreatedEvent event = new EmployeeCreatedEvent(savedEmployee.getEmail(), token);
+        // Notify for Account Creation (Existing Notification flow)
+        EmployeeCreatedEvent notificationEvent = new EmployeeCreatedEvent(savedEmployee.getEmail(), token);
+        
+        // Saga Event: Start Payroll flow
+        EmployeeSagaEvent sagaEvent = new EmployeeSagaEvent(
+                savedEmployee.getId(),
+                savedEmployee.getEmail(),
+                savedEmployee.getFirstName(),
+                savedEmployee.getLastName(),
+                "PENDING"
+        );
+
         try {
-            Outbox outbox = Outbox.builder()
+            // Save notification event to outbox
+            outboxRepo.save(Outbox.builder()
                     .aggregateId(savedEmployee.getId().toString())
                     .aggregateType("Employee")
                     .eventType("EmployeeCreated")
-                    .payload(objectMapper.writeValueAsString(event))
+                    .payload(objectMapper.writeValueAsString(notificationEvent))
                     .createdAt(Instant.now())
                     .processed(false)
-                    .build();
-            outboxRepo.save(outbox);
+                    .build());
+
+            // Save saga event to outbox
+            outboxRepo.save(Outbox.builder()
+                    .aggregateId(savedEmployee.getId().toString())
+                    .aggregateType("Employee")
+                    .eventType("EmployeeSagaStart")
+                    .payload(objectMapper.writeValueAsString(sagaEvent))
+                    .createdAt(Instant.now())
+                    .processed(false)
+                    .build());
+
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize EmployeeCreatedEvent", e);
+            log.error("Failed to serialize events", e);
             throw new RuntimeException("Internal Server Error during event serialization");
         }
 
@@ -162,5 +185,15 @@ public class EmployeeServiceImpl implements EmployeeService {
                 employee.isVerified(),
                 employee.getEmail()
         );
+    }
+
+    @Override
+    @Transactional
+    public void updateEmployeeStatus(UUID employeeId, Employee.Status status) {
+        Employee employee = employeeRepo.findById(employeeId)
+                .orElseThrow(() -> CustomResponseException.ResourceNotFound("Employee not found"));
+        employee.setStatus(status);
+        employeeRepo.save(employee);
+        log.info("Employee {} status updated to {}", employeeId, status);
     }
 }

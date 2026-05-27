@@ -60,9 +60,17 @@ public class Employee {
     @Column(name = "department_id", nullable = false)
     private UUID departmentId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Status status = Status.PENDING;
+
     @CreatedDate
     private Instant createdAt;
 
     @LastModifiedDate
     private Instant updatedAt;
+
+    public enum Status {
+        PENDING, ACTIVE, REJECTED
+    }
 }
