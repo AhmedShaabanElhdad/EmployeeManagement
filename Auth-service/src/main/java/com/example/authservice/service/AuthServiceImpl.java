@@ -10,6 +10,8 @@ import com.example.authservice.repo.UserAccountRepo;
 import core.CustomResponseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -32,6 +34,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "users", key = "#signUpRequestDTO.username()")
     public UserResponseDTO signup(SignUpRequestDTO signUpRequestDTO, String token) {
         EmployeeResponse employee = employeeClient.getEmployeeByToken(token);
 
@@ -57,7 +60,9 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Cacheable(value = "auth_responses", key = "#loginRequestDTO.username()")
     public AuthResponseDTO login(LoginRequestDTO loginRequestDTO) {
+        log.info("Authenticating user: {}", loginRequestDTO.username());
         authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
                 loginRequestDTO.username(),
                 loginRequestDTO.password()

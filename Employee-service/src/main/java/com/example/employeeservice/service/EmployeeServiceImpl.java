@@ -3,19 +3,26 @@ package com.example.employeeservice.service;
 import com.example.employeeservice.abstraction.EmployeeService;
 import com.example.employeeservice.dtos.*;
 import com.example.employeeservice.entity.Employee;
+import com.example.employeeservice.entity.Outbox;
 import com.example.employeeservice.gateway.DepartmentGateway;
 import com.example.employeeservice.mapper.Mapper;
 import com.example.employeeservice.repo.EmployeeRepo;
+import com.example.employeeservice.repo.OutboxRepo;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import core.CustomResponseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -24,8 +31,9 @@ import java.util.UUID;
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepo employeeRepo;
-    private final ApplicationEventPublisher eventPublisher;
+    private final OutboxRepo outboxRepo;
     private final DepartmentGateway departmentGateway;
+    private final ObjectMapper objectMapper;
 
     @Override
     public Page<Employee> findAll(int page, int size) {
@@ -34,7 +42,9 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    @Cacheable(value = "employees", key = "#employeeId")
     public EmployeeResponseDTO findEmployeeById(UUID employeeId) {
+        log.info("Fetching employee from DB for ID: {}", employeeId);
         Employee employeeEntity = employeeRepo.findById(employeeId)
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound(
                         "Employee with Id " + employeeId + " not found"
@@ -45,6 +55,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     @Override
     @Transactional
+    @CachePut(value = "employees", key = "#employeeId")
     public EmployeeResponseDTO updateEmployee(UUID employeeId, UpdateEmployeeDTO employee) {
         Employee updatedEmployee = employeeRepo.findById(employeeId)
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound(
@@ -67,6 +78,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     @Transactional
     @Override
+    @CacheEvict(value = "employees", key = "#employeeId")
     public void deleteEmployee(UUID employeeId) {
         if (!employeeRepo.existsById(employeeId)) {
             throw CustomResponseException.ResourceNotFound("Employee with Id " + employeeId + " not found");
@@ -101,15 +113,28 @@ public class EmployeeServiceImpl implements EmployeeService {
 
         Employee savedEmployee = employeeRepo.save(employee);
 
-        eventPublisher.publishEvent(new EmployeeCreatedEvent(
-                savedEmployee.getEmail(),
-                token
-        ));
+        // Transactional Outbox Pattern: Save event to Outbox table
+        EmployeeCreatedEvent event = new EmployeeCreatedEvent(savedEmployee.getEmail(), token);
+        try {
+            Outbox outbox = Outbox.builder()
+                    .aggregateId(savedEmployee.getId().toString())
+                    .aggregateType("Employee")
+                    .eventType("EmployeeCreated")
+                    .payload(objectMapper.writeValueAsString(event))
+                    .createdAt(Instant.now())
+                    .processed(false)
+                    .build();
+            outboxRepo.save(outbox);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize EmployeeCreatedEvent", e);
+            throw new RuntimeException("Internal Server Error during event serialization");
+        }
 
         return Mapper.toResponseDTO(savedEmployee);
     }
 
     @Override
+    @Cacheable(value = "employees", key = "#token")
     public EmployeeResponse findByToken(String token) {
         Employee employee = employeeRepo.findOneByAccountCreationToken(token)
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound("Employee not found"));
@@ -123,6 +148,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "employees", allEntries = true)
     public EmployeeResponse verifyEmployee(String userId) {
         Employee employee = employeeRepo.findById(UUID.fromString(userId))
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound("Employee not found"));

@@ -1,0 +1,50 @@
+package com.example.employeeservice.service;
+
+import com.example.employeeservice.dtos.EmployeeCreatedEvent;
+import com.example.employeeservice.entity.Outbox;
+import com.example.employeeservice.message.publisher.EmployeeEventPublisher;
+import com.example.employeeservice.repo.OutboxRepo;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class OutboxProcessor {
+
+    private final OutboxRepo outboxRepo;
+    private final EmployeeEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
+
+    @Scheduled(fixedDelay = 5000)
+    @Transactional
+    public void processOutboxEvents() {
+        List<Outbox> unprocessedEvents = outboxRepo.findByProcessedFalse();
+
+        for (Outbox event : unprocessedEvents) {
+            try {
+                if ("EmployeeCreated".equals(event.getEventType())) {
+                    EmployeeCreatedEvent payload = objectMapper.readValue(event.getPayload(), EmployeeCreatedEvent.class);
+                    eventPublisher.publishEmployeeCreated(payload);
+                }
+
+                event.setProcessed(true);
+                event.setProcessedAt(Instant.now());
+                outboxRepo.save(event);
+
+                log.info("Successfully processed outbox event: {}", event.getId());
+            } catch (Exception e) {
+                log.error("Failed to process outbox event: {}", event.getId(), e);
+            }
+        }
+    }
+}
