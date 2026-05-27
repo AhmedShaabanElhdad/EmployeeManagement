@@ -69,11 +69,14 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-auth:5432/user
       - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_DATA_REDIS_HOST=redis
     depends_on:
       postgres-auth:
         condition: service_started
       eureka-server:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   employee-service:
     build:
@@ -83,12 +86,15 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-employee:5432/employees
       - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_DATA_REDIS_HOST=redis
       - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       postgres-employee:
         condition: service_started
       eureka-server:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   department-service:
     build:
@@ -98,11 +104,14 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-department:5432/department
       - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_DATA_REDIS_HOST=redis
     depends_on:
       postgres-department:
         condition: service_started
       eureka-server:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   notification-service:
     build:
