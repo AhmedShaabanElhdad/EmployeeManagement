@@ -2,6 +2,7 @@ package com.example.authservice.service;
 
 import com.example.authservice.abstraction.AuthService;
 import com.example.authservice.client.EmployeeClient;
+import com.example.authservice.config.KafkaProducerConfig;
 import com.example.authservice.dtos.*;
 import com.example.authservice.entity.UserAccount;
 import com.example.authservice.helper.JwtHelper;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,6 +33,7 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtHelper jwtHelper;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Override
     @Transactional
@@ -55,7 +58,12 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("User created successfully: {}", signUpRequestDTO.username());
 
-        employeeClient.verify(new UserIdRequestDTO(userAccount.getEmployeeId().toString()));
+        // Asynchronously notify Employee Service via Kafka
+        kafkaTemplate.send(
+                KafkaProducerConfig.VERIFY_TOPIC, 
+                new UserIdRequestDTO(userAccount.getEmployeeId().toString())
+        );
+
         return Mapper.toUserResponseDTO(userAccount);
     }
 
