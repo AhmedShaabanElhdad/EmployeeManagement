@@ -23,4 +23,6 @@ public interface EmployeeService {
     EmployeeResponse findByToken(String token);
 
     EmployeeResponse verifyEmployee(String userId);
+
+    void updateEmployeeStatus(UUID employeeId, Employee.Status status);
 }

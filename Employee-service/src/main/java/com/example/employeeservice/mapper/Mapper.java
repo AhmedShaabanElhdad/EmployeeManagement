@@ -14,7 +14,8 @@ public class Mapper {
                 employee.getPhoneNumber(),
                 employee.isVerified(),
                 employee.getPosition(),
-                employee.getDepartmentId()
+                employee.getDepartmentId(),
+                employee.getStatus()
         );
     }
 }

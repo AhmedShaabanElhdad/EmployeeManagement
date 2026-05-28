@@ -1,5 +1,6 @@
 package com.example.employeeservice.dtos;
 
+import com.example.employeeservice.entity.Employee;
 import java.time.LocalDate;
 import java.util.UUID;
 
@@ -12,6 +13,7 @@ public record EmployeeResponseDTO(
         String phoneNumber,
         boolean isVerified,
         String position,
-        UUID departmentId
+        UUID departmentId,
+        Employee.Status status
 ) {
 }
