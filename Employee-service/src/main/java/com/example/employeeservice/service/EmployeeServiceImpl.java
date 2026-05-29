@@ -8,6 +8,7 @@ import com.example.employeeservice.gateway.DepartmentGateway;
 import com.example.employeeservice.mapper.Mapper;
 import com.example.employeeservice.repo.EmployeeRepo;
 import com.example.employeeservice.repo.OutboxRepo;
+import com.example.shared.monitoring.MetricsProvider;
 import com.example.shared.events.EmployeeSagaEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,22 +36,29 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final OutboxRepo outboxRepo;
     private final DepartmentGateway departmentGateway;
     private final ObjectMapper objectMapper;
+    private final MetricsProvider metricsProvider;
 
     @Override
     public Page<Employee> findAll(int page, int size) {
+        long startTime = System.currentTimeMillis();
         Pageable pageable = PageRequest.of(page, size);
-        return employeeRepo.findAll(pageable);
+        Page<Employee> result = employeeRepo.findAll(pageable);
+        metricsProvider.recordExecutionTime("employee.find.all.time", System.currentTimeMillis() - startTime);
+        return result;
     }
 
     @Override
     @Cacheable(value = "employees", key = "#employeeId")
     public EmployeeResponseDTO findEmployeeById(UUID employeeId) {
+        long startTime = System.currentTimeMillis();
         log.info("Fetching employee from DB for ID: {}", employeeId);
         Employee employeeEntity = employeeRepo.findById(employeeId)
-                .orElseThrow(() -> CustomResponseException.ResourceNotFound(
-                        "Employee with Id " + employeeId + " not found"
-                ));
+                .orElseThrow(() -> {
+                    metricsProvider.incrementCounter("employee.find.error", "type", "not_found");
+                    return CustomResponseException.ResourceNotFound("Employee with Id " + employeeId + " not found");
+                });
 
+        metricsProvider.recordExecutionTime("employee.find.by.id.time", System.currentTimeMillis() - startTime);
         return Mapper.toResponseDTO(employeeEntity);
     }
 
@@ -58,12 +66,14 @@ public class EmployeeServiceImpl implements EmployeeService {
     @Transactional
     @CachePut(value = "employees", key = "#employeeId")
     public EmployeeResponseDTO updateEmployee(UUID employeeId, UpdateEmployeeDTO employee) {
+        metricsProvider.incrementCounter("employee.update.request");
         Employee updatedEmployee = employeeRepo.findById(employeeId)
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound(
                         "Employee with Id " + employeeId + " not found"
                 ));
 
         if (employeeRepo.existsByEmailAndIdNot(employee.email(), employeeId)) {
+            metricsProvider.incrementCounter("employee.update.error", "reason", "email_exists");
             throw CustomResponseException.BadRequest("Email already exists");
         }
 
@@ -74,6 +84,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         updatedEmployee.setEmail(employee.email());
 
         Employee employeeEntity = employeeRepo.save(updatedEmployee);
+        metricsProvider.incrementCounter("employee.update.success");
         return Mapper.toResponseDTO(employeeEntity);
     }
 
@@ -85,18 +96,22 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw CustomResponseException.ResourceNotFound("Employee with Id " + employeeId + " not found");
         }
         employeeRepo.deleteById(employeeId);
+        metricsProvider.incrementCounter("employee.delete.success");
     }
 
     @Transactional
     @Override
     public EmployeeResponseDTO createEmployee(CreateEmployeeDTO createEmployeeDTO) {
+        metricsProvider.incrementCounter("employee.create.request");
         var response = departmentGateway.getDepartment(createEmployeeDTO.departmentId()).getBody();
         
         if (response == null || response.data == null || "UNKNOWN_DEPARTMENT".equals(response.data.name())) {
+            metricsProvider.incrementCounter("employee.create.error", "reason", "department_not_found");
             throw CustomResponseException.ResourceNotFound("Department with Id " + createEmployeeDTO.departmentId() + " not found or unavailable");
         }
 
         if (employeeRepo.existsByEmail(createEmployeeDTO.email())) {
+            metricsProvider.incrementCounter("employee.create.error", "reason", "email_exists");
             throw CustomResponseException.BadRequest("Email already exists");
         }
 
@@ -111,14 +126,11 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setHireAt(createEmployeeDTO.hireAt());
         employee.setPhoneNumber(createEmployeeDTO.phoneNumber());
         employee.setDepartmentId(response.data.id());
-        employee.setStatus(Employee.Status.PENDING); // Initialize as PENDING for Saga
+        employee.setStatus(Employee.Status.PENDING);
 
         Employee savedEmployee = employeeRepo.save(employee);
 
-        // Notify for Account Creation (Existing Notification flow)
         EmployeeCreatedEvent notificationEvent = new EmployeeCreatedEvent(savedEmployee.getEmail(), token);
-        
-        // Saga Event: Start Payroll flow
         EmployeeSagaEvent sagaEvent = new EmployeeSagaEvent(
                 savedEmployee.getId(),
                 savedEmployee.getEmail(),
@@ -128,7 +140,6 @@ public class EmployeeServiceImpl implements EmployeeService {
         );
 
         try {
-            // Save notification event to outbox
             outboxRepo.save(Outbox.builder()
                     .aggregateId(savedEmployee.getId().toString())
                     .aggregateType("Employee")
@@ -138,7 +149,6 @@ public class EmployeeServiceImpl implements EmployeeService {
                     .processed(false)
                     .build());
 
-            // Save saga event to outbox
             outboxRepo.save(Outbox.builder()
                     .aggregateId(savedEmployee.getId().toString())
                     .aggregateType("Employee")
@@ -153,20 +163,20 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw new RuntimeException("Internal Server Error during event serialization");
         }
 
+        metricsProvider.incrementCounter("employee.create.success");
         return Mapper.toResponseDTO(savedEmployee);
     }
 
     @Override
     @Cacheable(value = "employees", key = "#token")
     public EmployeeResponse findByToken(String token) {
-        Employee employee = employeeRepo.findOneByAccountCreationToken(token)
+        return employeeRepo.findOneByAccountCreationToken(token)
+                .map(employee -> new EmployeeResponse(
+                        employee.getId(),
+                        employee.isVerified(),
+                        employee.getEmail()
+                ))
                 .orElseThrow(() -> CustomResponseException.ResourceNotFound("Employee not found"));
-
-        return new EmployeeResponse(
-                employee.getId(),
-                employee.isVerified(),
-                employee.getEmail()
-        );
     }
 
     @Override
@@ -179,6 +189,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setVerified(true);
         employee.setAccountCreationToken(null);
         employeeRepo.save(employee);
+        metricsProvider.incrementCounter("employee.verify.success");
 
         return new EmployeeResponse(
                 employee.getId(),
@@ -195,5 +206,6 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setStatus(status);
         employeeRepo.save(employee);
         log.info("Employee {} status updated to {}", employeeId, status);
+        metricsProvider.incrementCounter("employee.status.update", "status", status.name());
     }
 }
