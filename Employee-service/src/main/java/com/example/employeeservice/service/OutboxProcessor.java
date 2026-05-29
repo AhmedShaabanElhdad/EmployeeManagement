@@ -25,7 +25,7 @@ public class OutboxProcessor {
     private final ObjectMapper objectMapper;
     private final MetricsProvider metricsProvider;
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 5000) // Poll every 5 seconds
     @Transactional
     public void processOutboxEvents() {
         List<Outbox> unprocessedEvents = outboxRepo.findByProcessedFalse();
@@ -38,8 +38,11 @@ public class OutboxProcessor {
                 if ("EmployeeCreated".equals(event.getEventType())) {
                     EmployeeCreatedEvent payload = objectMapper.readValue(event.getPayload(), EmployeeCreatedEvent.class);
                     eventPublisher.publishEmployeeCreated(payload);
+                } else if ("EmployeeSagaStart".equals(event.getEventType())) {
+                    EmployeeSagaEvent sagaPayload = objectMapper.readValue(event.getPayload(), EmployeeSagaEvent.class);
+                    kafkaTemplate.send("employee-saga-topic", sagaPayload);
                 }
-
+                
                 event.setProcessed(true);
                 event.setProcessedAt(Instant.now());
                 outboxRepo.save(event);
