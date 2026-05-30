@@ -4,11 +4,10 @@ import com.example.employeeservice.dtos.EmployeeCreatedEvent;
 import com.example.employeeservice.entity.Outbox;
 import com.example.employeeservice.message.publisher.EmployeeEventPublisher;
 import com.example.employeeservice.repo.OutboxRepo;
-import com.example.shared.events.EmployeeSagaEvent;
+import com.example.shared.monitoring.MetricsProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,12 +23,15 @@ public class OutboxProcessor {
     private final OutboxRepo outboxRepo;
     private final EmployeeEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final MetricsProvider metricsProvider;
 
     @Scheduled(fixedDelay = 5000) // Poll every 5 seconds
     @Transactional
     public void processOutboxEvents() {
         List<Outbox> unprocessedEvents = outboxRepo.findByProcessedFalse();
+        
+        // Record the current size of pending events (Gauge)
+        metricsProvider.recordMetric("outbox.pending.size", unprocessedEvents.size());
 
         for (Outbox event : unprocessedEvents) {
             try {
@@ -44,10 +46,12 @@ public class OutboxProcessor {
                 event.setProcessed(true);
                 event.setProcessedAt(Instant.now());
                 outboxRepo.save(event);
-                
-                log.info("Successfully processed outbox event: {} of type {}", event.getId(), event.getEventType());
+
+                log.info("Successfully processed outbox event: {}", event.getId());
+                metricsProvider.incrementCounter("outbox.event.processed", "type", event.getEventType());
             } catch (Exception e) {
                 log.error("Failed to process outbox event: {}", event.getId(), e);
+                metricsProvider.incrementCounter("outbox.event.error", "type", event.getEventType());
             }
         }
     }

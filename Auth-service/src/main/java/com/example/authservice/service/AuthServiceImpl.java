@@ -8,6 +8,7 @@ import com.example.authservice.entity.UserAccount;
 import com.example.authservice.helper.JwtHelper;
 import com.example.authservice.mapper.Mapper;
 import com.example.authservice.repo.UserAccountRepo;
+import com.example.shared.monitoring.MetricsProvider;
 import core.CustomResponseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,18 +35,22 @@ public class AuthServiceImpl implements AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtHelper jwtHelper;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final MetricsProvider metricsProvider;
 
     @Override
     @Transactional
     @CacheEvict(value = "users", key = "#signUpRequestDTO.username()")
     public UserResponseDTO signup(SignUpRequestDTO signUpRequestDTO, String token) {
+        metricsProvider.incrementCounter("auth.signup.request");
         EmployeeResponse employee = employeeClient.getEmployeeByToken(token);
 
         if (employee.verified()) {
+            metricsProvider.incrementCounter("auth.signup.error", "reason", "already_verified");
             throw CustomResponseException.BadRequest("Account Already Verified");
         }
 
         if (userAccountRepo.findByUserName(signUpRequestDTO.username()).isPresent()) {
+            metricsProvider.incrementCounter("auth.signup.error", "reason", "user_exists");
             throw CustomResponseException.BadRequest("Username already exists");
         }
 
@@ -58,32 +63,47 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("User created successfully: {}", signUpRequestDTO.username());
 
-        // Asynchronously notify Employee Service via Kafka
         kafkaTemplate.send(
                 KafkaProducerConfig.VERIFY_TOPIC, 
                 new UserIdRequestDTO(userAccount.getEmployeeId().toString())
         );
 
+        metricsProvider.incrementCounter("auth.signup.success");
         return Mapper.toUserResponseDTO(userAccount);
     }
 
     @Override
     @Cacheable(value = "auth_responses", key = "#loginRequestDTO.username()")
     public AuthResponseDTO login(LoginRequestDTO loginRequestDTO) {
+        long startTime = System.currentTimeMillis();
+        metricsProvider.incrementCounter("auth.login.request");
         log.info("Authenticating user: {}", loginRequestDTO.username());
-        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
-                loginRequestDTO.username(),
-                loginRequestDTO.password()
-        ));
+        
+        try {
+            authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
+                    loginRequestDTO.username(),
+                    loginRequestDTO.password()
+            ));
+        } catch (Exception e) {
+            metricsProvider.incrementCounter("auth.login.error", "reason", "bad_credentials");
+            throw e;
+        }
 
         UserAccount userAccount = userAccountRepo.findByUserName(loginRequestDTO.username())
-                .orElseThrow(CustomResponseException::BadCredential);
+                .orElseThrow(() -> {
+                    metricsProvider.incrementCounter("auth.login.error", "reason", "user_not_found");
+                    return CustomResponseException.BadCredential();
+                });
 
-        return generateAuthResponse(userAccount);
+        AuthResponseDTO response = generateAuthResponse(userAccount);
+        metricsProvider.recordExecutionTime("auth.login.time", System.currentTimeMillis() - startTime);
+        metricsProvider.incrementCounter("auth.login.success");
+        return response;
     }
 
     @Override
     public AuthResponseDTO refresh(RefreshTokenRequestDTO refreshTokenRequestDTO) {
+        metricsProvider.incrementCounter("auth.refresh.request");
         String refreshToken = refreshTokenRequestDTO.refreshToken();
         String username = jwtHelper.extractUsername(refreshToken);
         
@@ -91,9 +111,11 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(CustomResponseException::BadCredential);
 
         if (!jwtHelper.isRefreshTokenValid(refreshToken, userAccount)) {
+            metricsProvider.incrementCounter("auth.refresh.error", "reason", "invalid_token");
             throw CustomResponseException.BadCredential();
         }
 
+        metricsProvider.incrementCounter("auth.refresh.success");
         return generateAuthResponse(userAccount);
     }
 

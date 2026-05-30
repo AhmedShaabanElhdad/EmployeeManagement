@@ -1,5 +1,6 @@
 package com.example.apigateway.config;
 
+import com.example.shared.monitoring.MetricsProvider;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,73 +21,51 @@ import java.util.UUID;
 public class JwtAuthenticationFilter implements WebFilter {
 
     private final JwtHelper jwtHelper;
+    private final MetricsProvider metricsProvider;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        log.info(
-                "Incoming request {} {}",
-                exchange.getRequest().getMethod(),
-                exchange.getRequest().getURI()
-        );
-
+        long startTime = System.currentTimeMillis();
         String path = exchange.getRequest().getURI().getPath();
+        String method = exchange.getRequest().getMethod().name();
 
-        if (path.contains("/api/v1/auth/login")
-                || path.contains("/api/v1/auth/signup")) {
+        metricsProvider.incrementCounter("gateway.request.received", "path", path, "method", method);
+
+        log.info("Incoming request {} {}", method, exchange.getRequest().getURI());
+
+        if (path.contains("/api/v1/auth/login") || path.contains("/api/v1/auth/signup")) {
             return chain.filter(exchange);
         }
 
-        String authHeader =
-                exchange.getRequest()
-                        .getHeaders()
-                        .getFirst(HttpHeaders.AUTHORIZATION);
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-
-            exchange.getResponse()
-                    .setStatusCode(HttpStatus.UNAUTHORIZED);
-
+            metricsProvider.incrementCounter("gateway.auth.error", "reason", "missing_header");
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
 
         String token = authHeader.substring(7);
         Claims claims = jwtHelper.validateToken(token);
         if (claims == null) {
-            exchange.getResponse()
-                    .setStatusCode(HttpStatus.UNAUTHORIZED);
-
+            metricsProvider.incrementCounter("gateway.auth.error", "reason", "invalid_token");
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
 
         String correlationId = UUID.randomUUID().toString();
-        ServerHttpRequest mutatedRequest =
-                exchange.getRequest()
-                        .mutate()
-                        .header("X-User-Id", claims.get("userId", String.class))
-                        .header("X-Correlation-Id", correlationId)
-                        .header("X-Role", claims.get("role", String.class))
-                        .build();
+        ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                .header("X-User-Id", claims.get("userId", String.class))
+                .header("X-Correlation-Id", correlationId)
+                .header("X-Role", claims.get("role", String.class))
+                .build();
 
-
-        try {
-            jwtHelper.extractUsername(token);
-        } catch (Exception ex) {
-
-            exchange.getResponse()
-                    .setStatusCode(HttpStatus.UNAUTHORIZED);
-
-            return exchange.getResponse().setComplete();
-        }
-
-        return chain.filter(exchange
-                .mutate()
-                .request(mutatedRequest)
-                .build()
-        ).then(Mono.fromRunnable(() -> {
-            log.info(
-                    "Response status: {}",
-                    exchange.getResponse().getStatusCode()
-            );
-        }));
+        return chain.filter(exchange.mutate().request(mutatedRequest).build())
+                .then(Mono.fromRunnable(() -> {
+                    HttpStatus status = (HttpStatus) exchange.getResponse().getStatusCode();
+                    metricsProvider.recordExecutionTime("gateway.request.processing.time", 
+                            System.currentTimeMillis() - startTime, "path", path, "status", status.name());
+                    log.info("Response status: {}", status);
+                }));
     }
 }
